@@ -54,18 +54,16 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
         run: |
-          # The androidx build_ffmpeg.sh configures FFmpeg WITHOUT --enable-gpl (=> LGPL) and
-          # statically links it into libffmpegJNI.so. We pass only the audio decoders we want.
-          # IMPORTANT: the exact positional args of build_ffmpeg.sh are version-specific. Follow the
-          # invocation in the CLONED README at media/libraries/decoder_ffmpeg/README.md for THIS tag
-          # (1.10.1 documents: FFMPEG_MODULE_PATH NDK_PATH HOST_PLATFORM ANDROID_ABI ENABLED_DECODERS[@]).
-          # Print it so the run log shows the canonical command, then run our best-match invocation:
-          sed -n '1,80p' ../README.md || true
+          # build_ffmpeg.sh signature (media3 1.10.1):
+          #   $1 FFMPEG_MODULE_PATH  $2 NDK_PATH  $3 HOST_PLATFORM
+          #   $4 ANDROID_ABI = minSdk API level (NOT the ABI name — script hardcodes arm64/armv7/x86/x86_64)
+          #   $5+ ENABLED_DECODERS
+          # We pass FlowVidTV's minSdk (26) and only the patent-expired audio decoders (ac3 eac3).
+          # FFmpeg is statically linked -> single libffmpegJNI.so, no shared libav*.so, no mpv collision.
           FFMPEG_MODULE_PATH="$(pwd)/.."
-          ENABLED_DECODERS_ARR=(${ENABLED_DECODERS})
           ./build_ffmpeg.sh \
             "${FFMPEG_MODULE_PATH}" "${ANDROID_NDK_HOME}" "linux-x86_64" \
-            "${ENABLED_DECODERS_ARR[@]}"
+            "26" ${ENABLED_DECODERS}
 
       - name: Assemble AAR
         working-directory: media
