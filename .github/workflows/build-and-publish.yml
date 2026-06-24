@@ -1,0 +1,89 @@
+name: Build LGPL FFmpeg media3 audio decoder
+
+# Builds the official androidx/media decoder_ffmpeg extension with a STATICALLY-LINKED LGPL FFmpeg
+# (audio decoders only, NO --enable-gpl) and publishes the AAR. Triggered by a version tag.
+#
+# FlowVidTV consumes the resulting AAR. See README.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  # MUST match FlowVidTV's androidx.media3 version.
+  MEDIA3_TAG: "1.10.1"
+  # FFmpeg branch that media3 1.10.1 expects — VERIFIED in androidx/media@1.10.1
+  # libraries/decoder_ffmpeg/README.md: "git clone ... --branch=release/6.0".
+  FFMPEG_TAG: "release/6.0"
+  # LGPL audio decoders. AC-3 + E-AC-3 are the patent-low-risk ones FlowVid actually needs.
+  # Add dca/mlp/truehd only after a patent/licensing decision (still encumbered).
+  ENABLED_DECODERS: "ac3 eac3"
+  NDK_VERSION: "27.2.12479018"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with: { distribution: "temurin", java-version: "17" }
+
+      - name: Android SDK + NDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK ${{ env.NDK_VERSION }}
+        run: sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
+
+      - name: Build deps
+        run: sudo apt-get update && sudo apt-get install -y nasm yasm make pkg-config
+
+      - name: Clone androidx/media @ ${{ env.MEDIA3_TAG }}
+        run: git clone --depth 1 --branch "${{ env.MEDIA3_TAG }}" https://github.com/androidx/media.git media
+
+      - name: Fetch FFmpeg @ ${{ env.FFMPEG_TAG }} into decoder_ffmpeg/jni
+        working-directory: media/libraries/decoder_ffmpeg/src/main/jni
+        run: |
+          git clone --depth 1 --branch "${{ env.FFMPEG_TAG }}" https://git.ffmpeg.org/ffmpeg.git ffmpeg
+          echo "FFMPEG_PATH=$(pwd)/ffmpeg" >> "$GITHUB_ENV"
+
+      - name: Build LGPL FFmpeg (audio-only, NO --enable-gpl) + JNI
+        working-directory: media/libraries/decoder_ffmpeg/src/main/jni
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+        run: |
+          # The androidx build_ffmpeg.sh configures FFmpeg WITHOUT --enable-gpl (=> LGPL) and
+          # statically links it into libffmpegJNI.so. We pass only the audio decoders we want.
+          # IMPORTANT: the exact positional args of build_ffmpeg.sh are version-specific. Follow the
+          # invocation in the CLONED README at media/libraries/decoder_ffmpeg/README.md for THIS tag
+          # (1.10.1 documents: FFMPEG_MODULE_PATH NDK_PATH HOST_PLATFORM ANDROID_ABI ENABLED_DECODERS[@]).
+          # Print it so the run log shows the canonical command, then run our best-match invocation:
+          sed -n '1,80p' ../README.md || true
+          FFMPEG_MODULE_PATH="$(pwd)/.."
+          ENABLED_DECODERS_ARR=(${ENABLED_DECODERS})
+          ./build_ffmpeg.sh \
+            "${FFMPEG_MODULE_PATH}" "${ANDROID_NDK_HOME}" "linux-x86_64" \
+            "${ENABLED_DECODERS_ARR[@]}"
+
+      - name: Assemble AAR
+        working-directory: media
+        run: ./gradlew :lib-decoder-ffmpeg:assembleRelease --no-daemon
+
+      - name: Locate AAR
+        id: aar
+        run: |
+          f=$(find media -path "*decoder_ffmpeg*" -name "*-release.aar" | head -1)
+          echo "path=$f" >> "$GITHUB_OUTPUT"
+          echo "Found AAR: $f"
+
+      # Publish the built AAR as a GitHub Release asset. That's all GitHub — no external services.
+      # To use it in FlowVidTV: download this .aar, drop it in FlowVidTV/app/libs/, and add
+      #   implementation(files("libs/flowvid-media3-ffmpeg.aar"))
+      # (same pattern Nuvio uses for its forked AARs). One copy per lib rebuild — which is rare.
+      - name: Publish AAR to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.aar.outputs.path }}
+          fail_on_unmatched_files: true
