@@ -1,0 +1,12 @@
+This repository's own build scripts and documentation are MIT-licensed (see LICENSE).
+
+The AAR it produces bundles third-party components under their own licenses:
+
+  - androidx/media (decoder_ffmpeg wrapper) — Apache License 2.0
+        https://github.com/androidx/media
+  - FFmpeg — GNU LGPL (built with --disable-gpl; no GPL-only components)
+        https://git.ffmpeg.org/ffmpeg.git  (branch release/6.0)
+
+FFmpeg is shipped as a separate dynamically-linked library. Its exact source is the
+release/6.0 branch above; the build configuration is in
+.github/workflows/build-and-publish.yml.
