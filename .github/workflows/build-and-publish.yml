@@ -45,6 +45,18 @@ jobs:
       - name: Clone androidx/media @ ${{ env.MEDIA3_TAG }}
         run: git clone --depth 1 --branch "${{ env.MEDIA3_TAG }}" https://github.com/androidx/media.git media
 
+      - name: Override NDK version in media3 build files
+        run: |
+          # media3 pins a specific NDK version in its build.gradle files. Gradle tries to
+          # auto-download that version at configuration time, which fails on hosted runners.
+          # Override every ndkVersion occurrence to match what we installed in the prior step.
+          find media -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) \
+            -exec sed -i "s/ndkVersion[[:space:]]*=[[:space:]]*[\"'][^\"']*[\"']/ndkVersion = \"${{ env.NDK_VERSION }}\"/g" {} \; 2>/dev/null || true
+          find media -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) \
+            -exec sed -i "s/ndkVersion[[:space:]]*[\"'][^\"']*[\"']/ndkVersion \"${{ env.NDK_VERSION }}\"/g" {} \; 2>/dev/null || true
+          echo "NDK version references after override:"
+          grep -r "ndkVersion" media --include="*.gradle" --include="*.gradle.kts" | head -10 || true
+
       - name: Fetch FFmpeg @ ${{ env.FFMPEG_TAG }} into decoder_ffmpeg/jni
         working-directory: media/libraries/decoder_ffmpeg/src/main/jni
         run: |
@@ -53,8 +65,6 @@ jobs:
 
       - name: Build LGPL FFmpeg (audio-only, NO --enable-gpl) + JNI
         working-directory: media/libraries/decoder_ffmpeg/src/main/jni
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
         run: |
           # build_ffmpeg.sh signature (media3 1.10.1):
           #   $1 FFMPEG_MODULE_PATH  $2 NDK_PATH  $3 HOST_PLATFORM
@@ -62,9 +72,10 @@ jobs:
           #   $5+ ENABLED_DECODERS
           # We pass FlowVidTV's minSdk (26) and only the patent-expired audio decoders (ac3 eac3).
           # FFmpeg is statically linked -> single libffmpegJNI.so, no shared libav*.so, no mpv collision.
+          NDK_HOME="${ANDROID_HOME}/ndk/${{ env.NDK_VERSION }}"
           FFMPEG_MODULE_PATH="$(pwd)/.."
           ./build_ffmpeg.sh \
-            "${FFMPEG_MODULE_PATH}" "${ANDROID_NDK_HOME}" "linux-x86_64" \
+            "${FFMPEG_MODULE_PATH}" "${NDK_HOME}" "linux-x86_64" \
             "26" ${ENABLED_DECODERS}
 
       - name: Assemble AAR
