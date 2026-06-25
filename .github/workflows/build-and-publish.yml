@@ -92,7 +92,7 @@ jobs:
       # Publish the built AAR as a GitHub Release asset. That's all GitHub — no external services.
       # To use it in FlowVidTV: download this .aar, drop it in FlowVidTV/app/libs/, and add
       #   implementation(files("libs/flowvid-media3-ffmpeg.aar"))
-      # (same pattern Nuvio uses for its forked AARs). One copy per lib rebuild — which is rare.
+      # One copy per lib rebuild — which is rare.
       - name: Publish AAR to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
