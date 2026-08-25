@@ -1,9 +1,4 @@
-name: Build LGPL FFmpeg media3 audio decoder
-
-# Builds the official androidx/media decoder_ffmpeg extension with a STATICALLY-LINKED LGPL FFmpeg
-# (audio decoders only, NO --enable-gpl) and publishes the AAR. Triggered by a version tag.
-#
-# FlowVidTV consumes the resulting AAR. See README.md.
+name: Build LGPL FFmpeg Media3 audio decoder
 
 on:
   push:
@@ -11,68 +6,65 @@ on:
   workflow_dispatch:
 
 env:
-  # MUST match FlowVidTV's androidx.media3 version.
-  MEDIA3_TAG: "1.10.1"
-  # FFmpeg branch that media3 1.10.1 expects — VERIFIED in androidx/media@1.10.1
-  # libraries/decoder_ffmpeg/README.md: "git clone ... --branch=release/6.0".
-  FFMPEG_TAG: "release/6.0"
-  # LGPL audio decoders. AC-3 + E-AC-3 are the patent-low-risk ones FlowVid actually needs.
-  # Add dca/mlp/truehd only after a patent/licensing decision (still encumbered).
-  ENABLED_DECODERS: "ac3 eac3"
+  MEDIA3_REF: "5fb306449733dd71595700c1227ad6087578c559"
+  FFMPEG_REF: "3f92512fd1fd6f5e6d6eb45a156c352835314d69"
+  ENABLED_DECODERS: "ac3 eac3 dca mlp truehd"
   NDK_VERSION: "27.2.12479018"
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write   # required to create GitHub Releases and upload assets
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - name: Checkout this repo
-        uses: actions/checkout@v4
+      - name: Checkout build recipe
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: JDK 17
-        uses: actions/setup-java@v4
-        with: { distribution: "temurin", java-version: "17" }
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-      - name: Android SDK + NDK
-        uses: android-actions/setup-android@v3
-      - name: Install NDK ${{ env.NDK_VERSION }}
-        run: sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
 
-      - name: Build deps
-        run: sudo apt-get update && sudo apt-get install -y nasm yasm make pkg-config
-
-      - name: Clone androidx/media @ ${{ env.MEDIA3_TAG }}
-        run: git clone --depth 1 --branch "${{ env.MEDIA3_TAG }}" https://github.com/androidx/media.git media
-
-      - name: Override NDK version in media3 build files
+      - name: Install NDK and native build dependencies
         run: |
-          # media3 pins a specific NDK version in its build.gradle files. Gradle tries to
-          # auto-download that version at configuration time, which fails on hosted runners.
-          # Override every ndkVersion occurrence to match what we installed in the prior step.
-          find media -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) \
-            -exec sed -i "s/ndkVersion[[:space:]]*=[[:space:]]*[\"'][^\"']*[\"']/ndkVersion = \"${{ env.NDK_VERSION }}\"/g" {} \; 2>/dev/null || true
-          find media -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) \
-            -exec sed -i "s/ndkVersion[[:space:]]*[\"'][^\"']*[\"']/ndkVersion \"${{ env.NDK_VERSION }}\"/g" {} \; 2>/dev/null || true
-          echo "NDK version references after override:"
-          grep -r "ndkVersion" media --include="*.gradle" --include="*.gradle.kts" | head -10 || true
+          sdkmanager --install "ndk;${NDK_VERSION}"
+          sudo apt-get update
+          sudo apt-get install -y make nasm pkg-config yasm
 
-      - name: Fetch FFmpeg @ ${{ env.FFMPEG_TAG }} into decoder_ffmpeg/jni
+      - name: Check out exact Media3 source
+        run: |
+          git init media
+          git -C media remote add origin https://github.com/androidx/media.git
+          git -C media fetch --depth 1 origin "${MEDIA3_REF}"
+          git -C media checkout --detach FETCH_HEAD
+          test "$(git -C media rev-parse HEAD)" = "${MEDIA3_REF}"
+
+      - name: Override Media3 NDK version
+        run: |
+          find media -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) \
+            -exec sed -i "s/ndkVersion[[:space:]]*=[[:space:]]*[\"'][^\"']*[\"']/ndkVersion = \"${NDK_VERSION}\"/g" {} \;
+          find media -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) \
+            -exec sed -i "s/ndkVersion[[:space:]]*[\"'][^\"']*[\"']/ndkVersion \"${NDK_VERSION}\"/g" {} \;
+
+      - name: Check out exact FFmpeg source
         working-directory: media/libraries/decoder_ffmpeg/src/main/jni
         run: |
-          git clone --depth 1 --branch "${{ env.FFMPEG_TAG }}" https://git.ffmpeg.org/ffmpeg.git ffmpeg
-          echo "FFMPEG_PATH=$(pwd)/ffmpeg" >> "$GITHUB_ENV"
+          git init ffmpeg
+          git -C ffmpeg remote add origin https://github.com/FFmpeg/FFmpeg.git
+          git -C ffmpeg fetch --depth 1 origin "${FFMPEG_REF}"
+          git -C ffmpeg checkout --detach FETCH_HEAD
+          test "$(git -C ffmpeg rev-parse HEAD)" = "${FFMPEG_REF}"
 
-      - name: Build LGPL FFmpeg (audio-only, NO --enable-gpl) + JNI
+      - name: Build five-decoder LGPL extension
         working-directory: media/libraries/decoder_ffmpeg/src/main/jni
         run: |
-          # build_ffmpeg.sh signature (media3 1.10.1):
-          #   $1 FFMPEG_MODULE_PATH  $2 NDK_PATH  $3 HOST_PLATFORM
-          #   $4 ANDROID_ABI = minSdk API level (NOT the ABI name — script hardcodes arm64/armv7/x86/x86_64)
-          #   $5+ ENABLED_DECODERS
-          # We pass FlowVidTV's minSdk (26) and only the patent-expired audio decoders (ac3 eac3).
-          # FFmpeg is statically linked -> single libffmpegJNI.so, no shared libav*.so, no mpv collision.
-          NDK_HOME="${ANDROID_HOME}/ndk/${{ env.NDK_VERSION }}"
+          NDK_HOME="${ANDROID_HOME}/ndk/${NDK_VERSION}"
           FFMPEG_MODULE_PATH="$(pwd)/.."
           ./build_ffmpeg.sh \
             "${FFMPEG_MODULE_PATH}" "${NDK_HOME}" "linux-x86_64" \
@@ -82,19 +74,87 @@ jobs:
         working-directory: media
         run: ./gradlew :lib-decoder-ffmpeg:assembleRelease --no-daemon
 
-      - name: Locate AAR
-        id: aar
+      - name: Verify and package release evidence
+        shell: bash
         run: |
-          f=$(find media -path "*decoder_ffmpeg*" -name "*-release.aar" | head -1)
-          echo "path=$f" >> "$GITHUB_OUTPUT"
-          echo "Found AAR: $f"
+          set -euo pipefail
+          SOURCE_AAR=$(find media -path "*decoder_ffmpeg*" -name "*-release.aar" -type f | head -1)
+          test -n "${SOURCE_AAR}"
+          mkdir -p dist inspect
+          cp "${SOURCE_AAR}" "dist/flowvid-media3-ffmpeg-${GITHUB_REF_NAME}.aar"
+          unzip -q "${SOURCE_AAR}" -d inspect
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            test -f "inspect/jni/${abi}/libffmpegJNI.so"
+          done
+          if find inspect -type f -name 'libav*.so' | grep -q .; then
+            echo "Unexpected shared FFmpeg libraries found"
+            exit 1
+          fi
+          cat > dist/build-manifest.txt <<EOF
+          recipe_commit=${GITHUB_SHA}
+          media3_commit=${MEDIA3_REF}
+          ffmpeg_commit=${FFMPEG_REF}
+          ndk_version=${NDK_VERSION}
+          min_sdk=26
+          decoders=${ENABLED_DECODERS}
+          license_mode=LGPL_no_enable_gpl
+          abis=arm64-v8a,armeabi-v7a,x86,x86_64
+          EOF
+          (cd dist && sha256sum *.aar build-manifest.txt > SHA256SUMS.txt)
+          cat dist/build-manifest.txt
+          cat dist/SHA256SUMS.txt
 
-      # Publish the built AAR as a GitHub Release asset. That's all GitHub — no external services.
-      # To use it in FlowVidTV: download this .aar, drop it in FlowVidTV/app/libs/, and add
-      #   implementation(files("libs/flowvid-media3-ffmpeg.aar"))
-      # One copy per lib rebuild — which is rare.
-      - name: Publish AAR to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          files: ${{ steps.aar.outputs.path }}
-          fail_on_unmatched_files: true
+          name: flowvid-media3-ffmpeg-${{ github.ref_name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Attest release evidence
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            dist/*.aar
+            dist/SHA256SUMS.txt
+
+      - name: Publish immutable GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          state=$(gh release view "${tag}" --json isDraft,isImmutable,targetCommitish 2>/dev/null || true)
+
+          if [ -z "${state}" ]; then
+            gh release create "${tag}" --draft --target "${GITHUB_SHA}" \
+              --title "FlowVid Media3 FFmpeg ${tag}" \
+              --notes "Pinned four-ABI five-decoder LGPL build with manifest, checksums and provenance."
+          elif [ "$(jq -r '.isImmutable' <<<"${state}")" = "true" ]; then
+            for file in dist/*; do
+              name=$(basename "${file}")
+              local_digest="sha256:$(sha256sum "${file}" | cut -d' ' -f1)"
+              remote_digest=$(gh release view "${tag}" --json assets \
+                --jq ".assets[] | select(.name == \"${name}\") | .digest")
+              test "${remote_digest}" = "${local_digest}"
+            done
+            echo "Immutable release ${tag} already matches this build."
+            exit 0
+          else
+            test "$(jq -r '.isDraft' <<<"${state}")" = "true"
+            test "$(jq -r '.targetCommitish' <<<"${state}")" = "${GITHUB_SHA}"
+          fi
+
+          gh release upload "${tag}" dist/* --clobber
+          gh release edit "${tag}" --draft=false
+
+          test "$(gh release view "${tag}" --json isImmutable --jq '.isImmutable')" = "true"
+          for file in dist/*; do
+            name=$(basename "${file}")
+            local_digest="sha256:$(sha256sum "${file}" | cut -d' ' -f1)"
+            remote_digest=$(gh release view "${tag}" --json assets \
+              --jq ".assets[] | select(.name == \"${name}\") | .digest")
+            test "${remote_digest}" = "${local_digest}"
+          done

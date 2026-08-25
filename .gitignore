@@ -1,0 +1,14 @@
+# CI and local build outputs
+media/
+dist/
+inspect/
+.gradle/
+build/
+local.properties
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.iml
+.idea/
+.vscode/
