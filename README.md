@@ -23,12 +23,16 @@ shared FFmpeg libraries, and publishes a versioned AAR with `build-manifest.txt`
 and a GitHub build-provenance attestation. It fills a draft first and publishes only after every
 asset is present and digest-checked. GitHub Actions dependencies are pinned to full commit SHAs.
 
-After reviewing and committing the recipe, create a new immutable release tag:
+The current immutable release is [`v1.10.1-5`](../../releases/tag/v1.10.1-5). Its AAR SHA-256 is
+`3d92586fb3c4d2a3551b54396385dd5503ad8a8e115e8d2a2a67fd209cd7f5e9`.
+
+Maintainers create a later release by pushing a new tag after reviewing the pinned inputs. The
+workflow rejects a tag that does not match the configured artifact version.
 
 ```sh
-git tag v1.10.1-5
+git tag vX.Y.Z
 git push origin main
-git push origin v1.10.1-5
+git push origin vX.Y.Z
 ```
 
 ## Usage
