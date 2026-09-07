@@ -1,4 +1,4 @@
-# flowvid-media3-ffmpeg
+# flowvid-ffmpeg-android
 
 LGPL FFmpeg audio decoder extension for AndroidX Media3, packaged as an Android AAR. The build enables
 AC-3, E-AC-3, DTS (`dca`), MLP and TrueHD audio decoders. It does not enable video decoders or GPL
